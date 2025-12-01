@@ -368,7 +368,7 @@ $nome = $logado ? htmlspecialchars($_SESSION['usuario_nome']) : '';
             FutureMind
         <?php endif; ?>
     </div>
-
+            <form action="editar_perfil_action.php" method="post" enctype="multipart/form-data">
     <a href="index.php"><img src="inicio.png" style="width: 20px; height: 20px;"> Início</a>
     <!--a href="infovagas.php"><img src="vagas.png" style="width: 20px; height: 20px;"> Vagas</a-->
 

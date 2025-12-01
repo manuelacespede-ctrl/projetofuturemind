@@ -1,186 +1,142 @@
 <?php
-session_start();
-require "conexao.php";
+// editar_perfil_action.php
 
+// Mostrar erros apenas em desenvolvimento (remova/alimente conforme produção)
+ini_set('display_errors', 1);
+error_reporting(E_ALL);
+
+session_start();
+require 'conexao.php'; // <-- ajuste o caminho se necessário
+
+// checar autenticação
 if (!isset($_SESSION['usuario_id'])) {
-    header("Location: login.php");
+    header('Location: login.php');
     exit;
 }
 
 $usuario_id = $_SESSION['usuario_id'];
 
-$nome = trim($_POST["nome"]);
-$sobrenome = trim($_POST["sobrenome"]);
-$email = trim($_POST["email"]);
-$telefone = trim($_POST["telefone"]);
-$senha = trim($_POST["senha"]);
+// Receber e limpar dados (evitar notices se campos não vierem)
+$nome = isset($_POST['nome']) ? trim($_POST['nome']) : '';
+$sobrenome = isset($_POST['sobrenome']) ? trim($_POST['sobrenome']) : '';
+$email = isset($_POST['email']) ? trim($_POST['email']) : '';
+$telefone = isset($_POST['telefone']) ? trim($_POST['telefone']) : '';
+$senha_raw = isset($_POST['senha']) ? trim($_POST['senha']) : '';
 
+// Parâmetros de upload
+$allowed_ext = ['jpg','jpeg','png','gif','webp'];
+$max_bytes = 5 * 1024 * 1024; // 5 MB
+$uploadDirAbs = __DIR__ . '/uploads/'; // caminho absoluto
+$uploadDirWeb = 'uploads/';             // caminho web relativo (para <img>)
 
-//TESTE PARA FTO
-<?php
+// garante pasta uploads
+if (!is_dir($uploadDirAbs)) {
+    mkdir($uploadDirAbs, 0755, true);
+}
 
-if (isset($_POST['enviar'])) {
+// pega nome da foto antiga (antes de qualquer alteração)
+$stmt = $pdo->prepare("SELECT foto FROM usuarios WHERE id = :id");
+$stmt->execute([':id' => $usuario_id]);
+$usuario_atual = $stmt->fetch(PDO::FETCH_ASSOC);
+$foto_antiga = $usuario_atual['foto'] ?? null;
 
-    echo "<pre>";
-    print_r($_FILES);
-    echo "</pre>";
+// variáveis de controle
+$novo_nome_foto = null;
 
-    if (!is_dir(__DIR__ . "/uploads")) {
-        mkdir(__DIR__ . "/uploads", 0777, true);
-    }
+try {
+    // --- PROCESSAR UPLOAD (se enviado) ---
+    if (!empty($_FILES['foto']['name'])) {
+        $file = $_FILES['foto'];
 
-    $tmp = $_FILES['foto']['tmp_name'];
-    $nome = time() . "_" . $_FILES['foto']['name'];
-    $destino = __DIR__ . "/uploads/" . $nome;
+        if ($file['error'] !== UPLOAD_ERR_OK) {
+            // mapear erro simples
+            throw new Exception('Erro no upload (código ' . $file['error'] . ').');
+        }
 
-    echo "TEMP: $tmp<br>";
-    echo "DESTINO: $destino<br>";
+        if ($file['size'] > $max_bytes) {
+            throw new Exception('Arquivo maior que 5MB.');
+        }
 
-    if (move_uploaded_file($tmp, $destino)) {
-        echo "<b>UPLOAD OK!</b>";
-    } else {
-        echo "<b>FALHOU</b><br>";
-        echo "ERROR CODE: " . $_FILES['foto']['error'] . "<br>";
+        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        if (!in_array($ext, $allowed_ext)) {
+            throw new Exception('Formato inválido. Permitido: ' . implode(', ', $allowed_ext));
+        }
 
-        if (!is_writable(__DIR__ . "/uploads")) {
-            echo "A PASTA uploads NÃO TEM PERMISSÃO!";
+        // gerar nome único e seguro: id_timestamp_nomelimpo.ext
+        $base_name = pathinfo($file['name'], PATHINFO_FILENAME);
+        $base_name = preg_replace('/[^a-zA-Z0-9_\-]/', '_', $base_name);
+        $novo_nome_foto = $usuario_id . '_' . time() . '_' . $base_name . '.' . $ext;
+        $destinoAbs = $uploadDirAbs . $novo_nome_foto;
+
+        if (!move_uploaded_file($file['tmp_name'], $destinoAbs)) {
+            throw new Exception('Falha ao mover o arquivo. Verifique permissões da pasta uploads.');
         }
     }
-}
 
-//FIM DE TESTE PARA FTO
+    // --- MONTAR SQL DINÂMICO ---
+    $fields = [];
+    $params = [':id' => $usuario_id];
 
-// Atualiza os dados
-if ($senha === "") {
-    // Atualiza tudo EXCETO senha
-    $sql = "UPDATE usuarios SET nome = :nome, sobrenome = :sobrenome, email = :email, telefone = :telefone 
-            WHERE id = :id";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([
-        ':nome' => $nome,
-        ':sobrenome' => $sobrenome,
-        ':email' => $email,
-        ':telefone' => $telefone,
-        ':id' => $usuario_id
-    ]);
-} else {
-    // Atualiza incluindo a senha
-    $sql = "UPDATE usuarios SET nome = :nome, sobrenome = :sobrenome, email = :email, telefone = :telefone, senha = :senha
-            WHERE id = :id";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([
-        ':nome' => $nome,
-        ':sobrenome' => $sobrenome,
-        ':email' => $email,
-        ':telefone' => $telefone,
-        ':senha' => $senha,
-        ':id' => $usuario_id
-    ]);
-}
+    // campos sempre atualizados
+    $fields[] = 'nome = :nome';
+    $params[':nome'] = $nome;
 
-// Atualiza sessão
-$_SESSION['usuario_nome'] = $nome;
+    $fields[] = 'sobrenome = :sobrenome';
+    $params[':sobrenome'] = $sobrenome;
 
-// Redireciona com mensagem de sucesso
-header("Location: editar_perfil.php?ok=1");
-exit;
+    $fields[] = 'email = :email';
+    $params[':email'] = $email;
 
-session_start();
-require 'conexao.php';
+    $fields[] = 'telefone = :telefone';
+    $params[':telefone'] = $telefone;
 
-$usuario_id = $_SESSION['usuario_id'];
-
-// pega dados comuns
-$nome = $_POST['nome'];
-$sobrenome = $_POST['sobrenome'];
-$email = $_POST['email'];
-$telefone = $_POST['telefone'];
-$senha = trim($_POST['senha']);
-
-// PROCESSAR FOTO
-if (!empty($_FILES['foto']['name'])) {
-    $ext = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
-    $novo_nome = "foto_usuario_" . $usuario_id . "." . $ext;
-
-    $caminho = "uploads/" . $novo_nome;
-
-   if (move_uploaded_file($_FILES['foto']['tmp_name'], $caminho)) {
-    echo "ARQUIVO MOVIDO COM SUCESSO!";
-} else {
-    echo "ERRO AO MOVER ARQUIVO<br>";
-
-    echo "tmp_name: " . $_FILES['foto']['tmp_name'] . "<br>";
-    echo "destino: " . $caminho . "<br>";
-    echo "error code: " . $_FILES['foto']['error'] . "<br>";
-
-    if (!is_writable("uploads")) {
-        echo "PASTA uploads NÃO TEM PERMISSÃO DE ESCRITA";
+    // senha: somente se preenchida (hash)
+    if ($senha_raw !== '') {
+        $senha_hash = password_hash($senha_raw, PASSWORD_DEFAULT);
+        $fields[] = 'senha = :senha';
+        $params[':senha'] = $senha_hash;
     }
-}
 
-        // Atualiza no banco
-        $sql_foto = "UPDATE usuarios SET foto = :foto WHERE id = :id";
-        $stmt_foto = $pdo->prepare($sql_foto);
-        $stmt_foto->execute([
-            ':foto' => $novo_nome,
-            ':id'   => $usuario_id
-        ]);
-    } else {
-        echo "ERRO AO MOVER O ARQUIVO!";
+    // foto: somente se houve upload
+    if ($novo_nome_foto !== null) {
+        $fields[] = 'foto = :foto';
+        $params[':foto'] = $novo_nome_foto;
     }
-    // remove foto antiga se existir
-    $sql = "SELECT foto FROM usuarios WHERE id = :id";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([':id' => $usuario_id]);
-    $antiga = $stmt->fetchColumn();
 
-    if ($antiga && file_exists("uploads/".$antiga)) {
-        unlink("uploads/".$antiga);
+    if (empty($fields)) {
+        // nada pra atualizar (caso improvável)
+        header('Location: editar_perfil.php?ok=1');
+        exit;
     }
-}
 
-// atualizar dados
-if ($senha == "") {
-    // sem alterar senha
-    $sql = "UPDATE usuarios 
-            SET nome = :n, sobrenome = :s, email = :e, telefone = :t 
-            ".($foto_nome ? ", foto = :f" : "")."
-            WHERE id = :id";
-    
-    $stmt = $pdo->prepare($sql);
-    $params = [
-        ':n' => $nome,
-        ':s' => $sobrenome,
-        ':e' => $email,
-        ':t' => $telefone,
-        ':id' => $usuario_id
-    ];
-
-    if ($foto_nome) $params[':f'] = $foto_nome;
-
-} else {
-    // com senha
-    $sql = "UPDATE usuarios 
-            SET nome = :n, sobrenome = :s, email = :e, telefone = :t, senha = :senha
-            ".($foto_nome ? ", foto = :f" : "")."
-            WHERE id = :id";
+    $sql = 'UPDATE usuarios SET ' . implode(', ', $fields) . ' WHERE id = :id';
 
     $stmt = $pdo->prepare($sql);
-    $params = [
-        ':n' => $nome,
-        ':s' => $sobrenome,
-        ':e' => $email,
-        ':t' => $telefone,
-        ':senha' => $senha,
-        ':id' => $usuario_id
-    ];
+    $stmt->execute($params);
 
-    if ($foto_nome) $params[':f'] = $foto_nome;
+    // se atualizou foto, apaga a antiga (somente se existir e não for padrão)
+    if ($novo_nome_foto !== null && $foto_antiga && $foto_antiga !== 'default.png') {
+        $caminho_antigo = $uploadDirAbs . $foto_antiga;
+        if (file_exists($caminho_antigo)) @unlink($caminho_antigo);
+    }
+
+    // atualizar sessão (nome e foto se aplicável)
+    $_SESSION['usuario_nome'] = $nome;
+    if ($novo_nome_foto !== null) {
+        $_SESSION['usuario_foto'] = $novo_nome_foto;
+    }
+
+    header('Location: editar_perfil.php?ok=1');
+    exit;
+
+} catch (Exception $e) {
+    // se um upload criou um arquivo mas deu erro depois, tenta remover
+    if (!empty($novo_nome_foto) && file_exists($uploadDirAbs . $novo_nome_foto)) {
+        @unlink($uploadDirAbs . $novo_nome_foto);
+    }
+
+    // redireciona informando erro (url-encode)
+    $msg = urlencode($e->getMessage());
+    header("Location: editar_perfil.php?error={$msg}");
+    exit;
 }
-
-$stmt->execute($params);
-
-header("Location: editar_perfil.php?ok=1");
-exit;
-
-?>
